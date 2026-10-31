@@ -1,0 +1,12 @@
+# PyPI releases verified for Python 3.12; NTLM needs no Kerberos/CredSSP extras.
+pypsrp==0.9.1
+requests==2.34.2
+cryptography==50.0.2
+pyspnego==0.12.4
+certifi==2026.10.23
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.8.0
+cffi==2.1.1
+pycparser==3.12
+sspilib==0.6.0; sys_platform == 'win32'

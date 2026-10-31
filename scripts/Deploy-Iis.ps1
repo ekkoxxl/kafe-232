@@ -18,6 +18,8 @@ param(
 
     [uri] $HealthCheckUri = 'http://127.0.0.1:8080/',
 
+    [System.Management.Automation.PSCredential] $HealthCheckCredential,
+
     [switch] $ValidateOnly
 )
 
@@ -52,6 +54,18 @@ function Assert-ChildPath([string] $Path, [string] $Parent) {
     }
 }
 
+function Get-ReleaseFileHash([string] $Path) {
+    # Get-FileHash is a hidden nested-module function in a JEA runspace. Use the
+    # fixed .NET hashing primitive instead of exposing extra remote commands.
+    $stream = $null
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    }
+    finally { if ($stream) { $stream.Dispose() }; $hasher.Dispose() }
+}
+
 function Test-Package([string] $Directory, [string] $CommitSha) {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
         throw 'Package directory does not exist.'
@@ -78,7 +92,7 @@ function Test-Package([string] $Directory, [string] $CommitSha) {
     if (-not $ValidateOnly -and ($manifest.sourceDirty -or $manifest.validationOnly)) {
         throw 'A dirty-source or validation-only package cannot be deployed.'
     }
-    $inventory = @{}
+    $inventory = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in @($manifest.files)) {
         $relative = [string] $entry.path
         if ([string]::IsNullOrWhiteSpace($relative) -or $relative.Contains('\') -or
@@ -92,7 +106,7 @@ function Test-Package([string] $Directory, [string] $CommitSha) {
                 throw 'Manifest contains an invalid Windows file name.'
             }
         }
-        if ($inventory.ContainsKey($relative) -or [string] $entry.sha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        if ($inventory.Contains($relative) -or [string] $entry.sha256 -notmatch '^[0-9a-fA-F]{64}$') {
             throw 'Manifest contains duplicate paths or an invalid SHA256 checksum.'
         }
         $fullPath = [IO.Path]::GetFullPath((Join-Path $Directory ($relative.Replace('/', '\'))))
@@ -101,16 +115,16 @@ function Test-Package([string] $Directory, [string] $CommitSha) {
             throw 'A file listed in the manifest is missing.'
         }
         if ((Get-Item -LiteralPath $fullPath).Length -ne [long] $entry.length -or
-            (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash -ine [string] $entry.sha256) {
+            (Get-ReleaseFileHash $fullPath) -ine [string] $entry.sha256) {
             throw 'A package file differs from the CI checksum or length.'
         }
-        $inventory[$relative] = $true
+        $null = $inventory.Add($relative)
     }
     if ($inventory.Count -eq 0) { throw 'The package file inventory is empty.' }
     foreach ($file in @($allItems | Where-Object { -not $_.PSIsContainer })) {
         $relative = $file.FullName.Substring($Directory.Length + 1).Replace('\', '/')
         if ($relative -ieq 'deployment-manifest.json') { continue }
-        if (-not $inventory.ContainsKey($relative)) { throw 'Package contains a file absent from the CI inventory.' }
+        if (-not $inventory.Contains($relative)) { throw 'Package contains a file absent from the CI inventory.' }
         if ($relative -match '(^|/)(\.git|\.github)(/|$)' -or
             $relative -match '\.(sql|mdf|ndf|ldf|bak|trn|pfx|p12|key|suo|user|csproj|sln|slnx)$' -or
             $file.Name -like '.env*') {
@@ -142,6 +156,10 @@ function Get-HttpStatus([bool] $UseWindowsCredentials) {
     $request.Timeout = 60000
     $request.ReadWriteTimeout = 60000
     $request.UseDefaultCredentials = $UseWindowsCredentials
+    if ($UseWindowsCredentials -and $null -ne $HealthCheckCredential) {
+        $request.UseDefaultCredentials = $false
+        $request.Credentials = $HealthCheckCredential.GetNetworkCredential()
+    }
     $request.KeepAlive = $false
     $response = $null
     try { $response = $request.GetResponse(); return [int] $response.StatusCode }
@@ -274,6 +292,20 @@ try {
         $appRule = New-Object Security.AccessControl.FileSystemAccessRule(('IIS AppPool\' + $poolName), 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
         $acl.AddAccessRule($appRule)
         Set-Acl -LiteralPath $target -AclObject $acl
+    }
+    if ($null -ne $HealthCheckCredential) {
+        # IIS Windows Authentication also applies NTFS authorization for the
+        # authenticated user. The dedicated non-admin smoke identity therefore
+        # needs read access to this release, including rollback targets.
+        $smokeIdentity = New-Object Security.Principal.NTAccount($HealthCheckCredential.UserName)
+        $smokeSid = $smokeIdentity.Translate([Security.Principal.SecurityIdentifier])
+        $targetDirectory = New-Object IO.DirectoryInfo($target)
+        # Read/write only the DACL. A JEA virtual administrator must not try to
+        # reassign an older release's original owner or primary group.
+        $targetAcl = $targetDirectory.GetAccessControl([Security.AccessControl.AccessControlSections]::Access)
+        $smokeRule = New-Object Security.AccessControl.FileSystemAccessRule($smokeSid, 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $targetAcl.SetAccessRule($smokeRule)
+        $targetDirectory.SetAccessControl($targetAcl)
     }
     Set-ItemProperty -LiteralPath ('IIS:\Sites\' + $SiteName) -Name physicalPath -Value $target
     $switched = $true

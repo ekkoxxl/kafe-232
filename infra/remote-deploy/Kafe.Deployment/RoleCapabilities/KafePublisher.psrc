@@ -1,0 +1,10 @@
+@{
+    GUID = 'f6126106-79c1-497c-8310-7c78fb067b51'
+    Author = 'Kafe deployment maintainers'
+    Description = 'Only bounded artifact upload, publication, rollback and version inspection.'
+    VisibleFunctions = @('Get-KafeDeploymentState', 'Start-KafeUpload', 'Send-KafeChunk', 'Publish-KafeUpload', 'Invoke-KafeRollback')
+    VisibleCmdlets = @()
+    VisibleExternalCommands = @()
+    VisibleProviders = @()
+    VisibleAliases = @()
+}

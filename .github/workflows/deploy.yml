@@ -1,0 +1,80 @@
+name: Deploy demo
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful main push CI run ID to deploy
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: kafe-demo-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Approve and deploy demo
+    if: >-
+      github.repository == 'OrcunUcuncu/kafe-232' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.repository.id == 1431509368 &&
+        github.event.workflow_run.head_repository.id == 1431509368))
+    environment: demo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out trusted deployment client
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned remoting dependencies
+        run: python -m pip install --disable-pip-version-check -r scripts/remote-deploy-requirements.txt
+
+      - name: Connect ephemeral deployment node to Tailscale
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4
+        with:
+          oauth-client-id: ${{ vars.TS_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:kafe-ci
+          version: '1.104.4'
+          use-cache: 'false'
+          ping: '100.126.247.75'
+
+      - name: Verify original CI archive and publish through restricted endpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.ci_run_id }}
+          KAFE_DEPLOY_HOST: ${{ vars.KAFE_DEPLOY_HOST }}
+          KAFE_DEPLOY_PORT: ${{ vars.KAFE_DEPLOY_PORT }}
+          KAFE_DEPLOY_USER: ${{ vars.KAFE_DEPLOY_USER }}
+          KAFE_DEPLOY_PASSWORD: ${{ secrets.KAFE_DEPLOY_PASSWORD }}
+          KAFE_WINRM_CA_PEM: ${{ vars.KAFE_WINRM_CA_PEM }}
+        run: python scripts/remote-deploy.py
+
+      - name: Record deployment scope
+        if: success()
+        run: |
+          printf '%s\n' 'Demo deployment completed using the original verified CI artifact.' 'The server verified Windows authentication and HTTP health. No database changes or application acceptance tests were performed.' >> "$GITHUB_STEP_SUMMARY"

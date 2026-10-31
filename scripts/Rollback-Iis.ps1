@@ -10,6 +10,7 @@ param(
 
     [string] $DeploymentRoot = 'C:\KafeDemo',
     [uri] $HealthCheckUri = 'http://127.0.0.1:8080/',
+    [System.Management.Automation.PSCredential] $HealthCheckCredential,
     [switch] $ValidateOnly
 )
 
@@ -22,6 +23,7 @@ $arguments = @{
     HealthCheckUri = $HealthCheckUri
     ValidateOnly = $ValidateOnly
 }
+if ($null -ne $HealthCheckCredential) { $arguments.HealthCheckCredential = $HealthCheckCredential }
 if ($PSBoundParameters.ContainsKey('WhatIf')) { $arguments.WhatIf = $PSBoundParameters.WhatIf }
 if ($PSBoundParameters.ContainsKey('Confirm')) { $arguments.Confirm = $PSBoundParameters.Confirm }
 & (Join-Path $PSScriptRoot 'Deploy-Iis.ps1') @arguments

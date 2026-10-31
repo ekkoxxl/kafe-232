@@ -1,0 +1,14 @@
+{
+  "tagOwners": { "tag:kafe-ci": ["REPLACE_WITH_OWNER_TAILSCALE_EMAIL"] },
+  "acls": [],
+  "grants": [
+    { "src": ["REPLACE_WITH_OWNER_TAILSCALE_EMAIL"], "dst": ["100.126.247.75"], "ip": ["*"] },
+    { "src": ["autogroup:member"], "dst": ["100.126.247.75"], "ip": ["tcp:8080"] },
+    { "src": ["tag:kafe-ci"], "dst": ["100.126.247.75"], "ip": ["tcp:5986"] }
+  ],
+  "ssh": [],
+  "tests": [
+    { "src": "REPLACE_WITH_OWNER_TAILSCALE_EMAIL", "proto": "tcp", "accept": ["100.126.247.75:8080", "100.126.247.75:3389", "100.126.247.75:5986"] },
+    { "src": "tag:kafe-ci", "proto": "tcp", "accept": ["100.126.247.75:5986"], "deny": ["100.126.247.75:8080", "100.126.247.75:3389", "100.126.247.75:1433"] }
+  ]
+}
